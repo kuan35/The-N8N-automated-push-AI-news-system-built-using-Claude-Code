@@ -1,0 +1,19 @@
+# 含有敏感資訊的腳本
+fix_workflow.py
+
+# 環境變數
+.env
+.env.local
+*.env
+
+# 下載的第三方套件（各自有獨立 git repo）
+n8n-mcp/
+n8n-skills/
+
+# 系統檔案
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.pyc

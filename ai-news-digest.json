@@ -1,0 +1,192 @@
+{
+  "name": "AI 新聞日報",
+  "nodes": [
+    {
+      "id": "node-schedule",
+      "name": "每日排程 9AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 320],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 1 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-tavily-automation",
+      "name": "搜尋 AI 自動化新聞",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 180],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.tavily.com/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"api_key\": \"{{ $env.TAVILY_API_KEY }}\",\n  \"query\": \"AI automation workflow agents tools latest news\",\n  \"search_depth\": \"advanced\",\n  \"max_results\": 8,\n  \"days\": 1,\n  \"include_answer\": false,\n  \"include_raw_content\": false\n}"
+      }
+    },
+    {
+      "id": "node-tavily-voice",
+      "name": "搜尋 AI 語音新聞",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 460],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.tavily.com/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"api_key\": \"{{ $env.TAVILY_API_KEY }}\",\n  \"query\": \"AI voice speech synthesis text-to-speech latest news\",\n  \"search_depth\": \"advanced\",\n  \"max_results\": 8,\n  \"days\": 1,\n  \"include_answer\": false,\n  \"include_raw_content\": false\n}"
+      }
+    },
+    {
+      "id": "node-merge",
+      "name": "合併搜尋結果",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [720, 320],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "id": "node-prepare",
+      "name": "整理文章資料",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 320],
+      "parameters": {
+        "jsCode": "// 收集兩次 Tavily 搜尋的所有文章，並去除重複\nconst allArticles = [];\nconst seenUrls = new Set();\n\nfor (const item of $input.all()) {\n  const results = item.json.results || [];\n  for (const article of results) {\n    if (!seenUrls.has(article.url)) {\n      seenUrls.add(article.url);\n      allArticles.push({\n        title: article.title || '無標題',\n        url: article.url || '',\n        content: (article.content || '').substring(0, 500),\n        publishedDate: article.published_date || ''\n      });\n    }\n  }\n}\n\n// 組成給 GPT-4 的文章清單文字\nconst articlesText = allArticles.map((a, i) =>\n  `[文章 ${i + 1}]\\n標題: ${a.title}\\n連結: ${a.url}\\n內容摘錄: ${a.content}\\n發布日期: ${a.publishedDate}`\n).join('\\n\\n---\\n\\n');\n\nreturn [{\n  json: {\n    articlesText,\n    articleCount: allArticles.length\n  }\n}];"
+      }
+    },
+    {
+      "id": "node-openai",
+      "name": "GPT-4 生成摘要",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 320],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"temperature\": 0.3,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"你是一位 AI 科技新聞分析師，專門整理 AI 自動化與 AI 語音技術的最新動態。\\n請用繁體中文撰寫，風格簡潔專業。\\n\\n請將回應格式化為以下 JSON 格式：\\n{\\n  \\\"articles\\\": [\\n    {\\n      \\\"title\\\": \\\"文章標題\\\",\\n      \\\"url\\\": \\\"原始連結\\\",\\n      \\\"summary\\\": \\\"2-3 行的繁體中文摘要\\\",\\n      \\\"category\\\": \\\"AI自動化 或 AI語音\\\"\\n    }\\n  ],\\n  \\\"insight\\\": \\\"今日重點觀察（100字以內的繁體中文分析）\\\"\\n}\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ '請分析以下 AI 新聞文章，依照指定 JSON 格式提供繁體中文摘要：\\n\\n' + $json.articlesText }}\"\n    }\n  ]\n}"
+      }
+    },
+    {
+      "id": "node-html",
+      "name": "生成黑白 HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 320],
+      "parameters": {
+        "jsCode": "// 解析 GPT-4 回傳的 JSON\nconst response = $input.first().json;\nconst content = response.choices[0].message.content;\n\nlet data;\ntry {\n  data = JSON.parse(content);\n} catch (e) {\n  data = { articles: [], insight: content };\n}\n\n// 日期格式化\nconst today = new Date().toLocaleDateString('zh-TW', {\n  year: 'numeric',\n  month: '2-digit',\n  day: '2-digit'\n});\n\n// 依類別分組\nconst automationArticles = (data.articles || []).filter(a =>\n  a.category && a.category.includes('自動化')\n);\nconst voiceArticles = (data.articles || []).filter(a =>\n  a.category && a.category.includes('語音')\n);\n// 未分類的文章平均分配\nconst uncat = (data.articles || []).filter(a =>\n  !a.category || (!a.category.includes('自動化') && !a.category.includes('語音'))\n);\nconst mid = Math.ceil(uncat.length / 2);\nconst autoList = [...automationArticles, ...uncat.slice(0, mid)];\nconst voiceList = [...voiceArticles, ...uncat.slice(mid)];\n\n// 渲染文章卡片\nconst renderArticles = (articles) => {\n  if (!articles.length) {\n    return '<p style=\"color:#888;font-style:italic;margin:0;\">今日暫無相關新聞</p>';\n  }\n  return articles.map(a => `\n    <div style=\"border:1px solid #e0e0e0;border-radius:6px;padding:20px 24px;margin-bottom:14px;background:#ffffff;\">\n      <h3 style=\"margin:0 0 10px;font-size:15px;font-weight:700;color:#111;line-height:1.5;\">\n        <a href=\"${a.url}\" style=\"color:#111;text-decoration:none;\" target=\"_blank\">${a.title}</a>\n      </h3>\n      <p style=\"margin:0 0 14px;font-size:14px;color:#555;line-height:1.8;\">${a.summary}</p>\n      <a href=\"${a.url}\" style=\"font-size:12px;color:#777;text-decoration:underline;letter-spacing:0.3px;\" target=\"_blank\">閱讀完整報導 →</a>\n    </div>\n  `).join('');\n};\n\n// 生成完整 HTML\nconst html = `<!DOCTYPE html>\n<html lang=\"zh-TW\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>AI 新聞日報 ${today}</title>\n</head>\n<body style=\"margin:0;padding:0;background:#f0f0f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,sans-serif;\">\n\n  <div style=\"max-width:660px;margin:0 auto;padding:28px 16px;\">\n\n    <!-- Header -->\n    <div style=\"background:#111111;color:#ffffff;padding:36px 32px;border-radius:8px;margin-bottom:28px;\">\n      <div style=\"font-size:10px;letter-spacing:4px;text-transform:uppercase;color:#888;margin-bottom:10px;\">DAILY DIGEST</div>\n      <h1 style=\"margin:0 0 8px;font-size:30px;font-weight:800;letter-spacing:-0.5px;line-height:1.2;\">AI 新聞日報</h1>\n      <div style=\"font-size:13px;color:#aaa;\">${today}&nbsp;&nbsp;·&nbsp;&nbsp;過去 24 小時精選</div>\n    </div>\n\n    <!-- AI 自動化 -->\n    <div style=\"margin-bottom:32px;\">\n      <div style=\"display:flex;align-items:center;gap:12px;margin-bottom:18px;\">\n        <div style=\"width:4px;height:24px;background:#111;border-radius:2px;\"></div>\n        <h2 style=\"margin:0;font-size:20px;font-weight:800;color:#111;letter-spacing:-0.3px;\">AI 自動化</h2>\n      </div>\n      ${renderArticles(autoList)}\n    </div>\n\n    <!-- AI 語音 -->\n    <div style=\"margin-bottom:32px;\">\n      <div style=\"display:flex;align-items:center;gap:12px;margin-bottom:18px;\">\n        <div style=\"width:4px;height:24px;background:#111;border-radius:2px;\"></div>\n        <h2 style=\"margin:0;font-size:20px;font-weight:800;color:#111;letter-spacing:-0.3px;\">AI 語音</h2>\n      </div>\n      ${renderArticles(voiceList)}\n    </div>\n\n    <!-- 今日重點觀察 -->\n    <div style=\"background:#111111;color:#ffffff;padding:28px 32px;border-radius:8px;margin-bottom:28px;\">\n      <div style=\"font-size:10px;letter-spacing:4px;text-transform:uppercase;color:#777;margin-bottom:12px;\">TODAY'S INSIGHT</div>\n      <h3 style=\"margin:0 0 14px;font-size:15px;font-weight:700;color:#fff;\">今日重點觀察</h3>\n      <p style=\"margin:0;font-size:15px;color:#ccc;line-height:1.9;\">${data.insight || '今日無特別觀察'}</p>\n    </div>\n\n    <!-- Footer -->\n    <div style=\"text-align:center;padding:8px 0;\">\n      <p style=\"margin:0;font-size:11px;color:#aaa;letter-spacing:0.5px;\">由 n8n · GPT-4 · Tavily 自動生成 &nbsp;|&nbsp; ${today}</p>\n    </div>\n\n  </div>\n</body>\n</html>`;\n\nreturn [{\n  json: {\n    html,\n    subject: `AI 新聞日報 | ${today}`\n  }\n}];"
+      }
+    },
+    {
+      "id": "node-email",
+      "name": "寄送郵件",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1680, 320],
+      "parameters": {
+        "fromEmail": "your-email@gmail.com",
+        "toEmail": "your-email@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.html }}"
+      },
+      "credentials": {
+        "smtp": {
+          "id": "1",
+          "name": "Gmail SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "每日排程 9AM": {
+      "main": [
+        [
+          { "node": "搜尋 AI 自動化新聞", "type": "main", "index": 0 },
+          { "node": "搜尋 AI 語音新聞", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "搜尋 AI 自動化新聞": {
+      "main": [
+        [{ "node": "合併搜尋結果", "type": "main", "index": 0 }]
+      ]
+    },
+    "搜尋 AI 語音新聞": {
+      "main": [
+        [{ "node": "合併搜尋結果", "type": "main", "index": 1 }]
+      ]
+    },
+    "合併搜尋結果": {
+      "main": [
+        [{ "node": "整理文章資料", "type": "main", "index": 0 }]
+      ]
+    },
+    "整理文章資料": {
+      "main": [
+        [{ "node": "GPT-4 生成摘要", "type": "main", "index": 0 }]
+      ]
+    },
+    "GPT-4 生成摘要": {
+      "main": [
+        [{ "node": "生成黑白 HTML", "type": "main", "index": 0 }]
+      ]
+    },
+    "生成黑白 HTML": {
+      "main": [
+        [{ "node": "寄送郵件", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
